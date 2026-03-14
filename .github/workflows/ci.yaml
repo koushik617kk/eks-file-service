@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  id-token: write
+  contents: read
+
 env:
   AWS_REGION: us-east-1
   ECR_REPO: file-service
@@ -39,9 +43,10 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPO:latest
 
-      - name: Update image tag in Helm repo
+      - name: Update image tag and repository in Helm repo
         env:
           IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           HELM_REPO: eks-shop-helm
           GH_PAT: ${{ secrets.HELM_REPO_PAT }}
           GH_USER: ${{ secrets.GH_USERNAME }}
@@ -50,7 +55,8 @@ jobs:
           git config --global user.name "GitHub Actions CI"
           git clone https://$GH_USER:$GH_PAT@github.com/$GH_USER/$HELM_REPO.git helm-repo
           cd helm-repo
-          sed -i "s/tag: .*/tag: \"$IMAGE_TAG\"/" file-service/values.yaml
+          sed -i "s|repository: .*|repository: \"$ECR_REGISTRY/file-service\"|" file-service/values.yaml
+          sed -i "s|tag: .*|tag: \"$IMAGE_TAG\"|" file-service/values.yaml
           git add .
-          git commit -m "ci: update file-service image to $IMAGE_TAG [skip ci]"
+          git commit -m "ci: update file-service → $ECR_REGISTRY/file-service:$IMAGE_TAG [skip ci]"
           git push
