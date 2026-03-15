@@ -1,4 +1,4 @@
-name: CI — Build & Push to ECR
+name: CI - Build and Push to ECR
 
 on:
   push:
@@ -16,7 +16,7 @@ env:
 
 jobs:
   build-and-push:
-    name: Build Docker Image & Push to ECR
+    name: Build Docker Image and Push to ECR
     runs-on: ubuntu-latest
 
     steps:
@@ -33,7 +33,8 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push image
+      - name: Build and push image to ECR
+        id: build
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -42,21 +43,32 @@ jobs:
           docker tag  $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPO:latest
           docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPO:latest
+          echo "ecr_registry=$ECR_REGISTRY" >> $GITHUB_OUTPUT
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Update image tag and repository in Helm repo
+      - name: Update values.yaml in Helm repo via GitHub API
         env:
-          IMAGE_TAG: ${{ github.sha }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          HELM_REPO: eks-shop-helm
-          GH_PAT: ${{ secrets.HELM_REPO_PAT }}
+          GH_TOKEN: ${{ secrets.HELM_REPO_PAT }}
+          ECR_REGISTRY: ${{ steps.build.outputs.ecr_registry }}
+          IMAGE_TAG: ${{ steps.build.outputs.image_tag }}
           GH_USER: ${{ secrets.GH_USERNAME }}
+          HELM_REPO: eks-shop-helm
+          VALUES_FILE: file-service/values.yaml
         run: |
-          git config --global user.email "ci@github-actions.com"
-          git config --global user.name "GitHub Actions CI"
-          git clone https://$GH_USER:$GH_PAT@github.com/$GH_USER/$HELM_REPO.git helm-repo
-          cd helm-repo
-          sed -i "s|repository: .*|repository: \"$ECR_REGISTRY/file-service\"|" file-service/values.yaml
-          sed -i "s|tag: .*|tag: \"$IMAGE_TAG\"|" file-service/values.yaml
-          git add .
-          git commit -m "ci: update file-service → $ECR_REGISTRY/file-service:$IMAGE_TAG [skip ci]"
-          git push
+          RESPONSE=$(gh api repos/$GH_USER/$HELM_REPO/contents/$VALUES_FILE)
+          FILE_SHA=$(echo "$RESPONSE" | jq -r '.sha')
+          CURRENT_CONTENT=$(echo "$RESPONSE" | jq -r '.content' | base64 -d)
+
+          NEW_CONTENT=$(echo "$CURRENT_CONTENT" \
+            | sed "s|repository: .*|repository: \"$ECR_REGISTRY/file-service\"|" \
+            | sed "s|tag: .*|tag: \"$IMAGE_TAG\"|")
+
+          ENCODED=$(echo "$NEW_CONTENT" | base64 -w0)
+
+          gh api repos/$GH_USER/$HELM_REPO/contents/$VALUES_FILE \
+            --method PUT \
+            --field message="ci: update file-service to $IMAGE_TAG [skip ci]" \
+            --field content="$ENCODED" \
+            --field sha="$FILE_SHA"
+
+          echo "Successfully updated $VALUES_FILE in $HELM_REPO"
