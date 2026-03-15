@@ -22,7 +22,7 @@ COPY app.py .
 # fsGroup: 1000 in the pod spec tells Kubernetes to chown the mounted volume to GID 1000
 RUN mkdir -p /data && chown appuser:appgroup /data
 
-USER appuser
+USER 1000:1000
 
 EXPOSE 5000
 
